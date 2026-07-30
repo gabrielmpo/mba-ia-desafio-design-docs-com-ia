@@ -11,10 +11,10 @@ Este inventário é a base de rastreabilidade para os design docs do Sistema de 
 | Requisitos não funcionais | 15 |
 | Alternativas consideradas | 9 |
 | Exclusões e adiamentos | 7 |
-| Questões abertas | 14 |
+| Questões abertas | 13 |
 | Referências de código | 20 |
 | Contexto, riscos e dependências | 14 |
-| **Total** | **122** |
+| **Total** | **121** |
 
 ## Decisões (26)
 
@@ -29,7 +29,7 @@ Este inventário é a base de rastreabilidade para os design docs do Sistema de 
 | DEC-07 | Operar inicialmente com single worker. | `[09:12] Diego`–`[09:13] Larissa` |
 | DEC-08 | Ordenar pendentes por `created_at`. | `[09:08] Diego`; `[09:12] Diego` |
 | DEC-09 | Aceitar ordering por pedido apenas enquanto houver single worker. | `[09:12]`–`[09:14]` |
-| DEC-10 | Fazer 5 retries. | `[09:15]`–`[09:17]` |
+| DEC-10 | Aplicar a política registrada como 5 tentativas; a relação entre a chamada inicial e os intervalos permanece em aberto. | `[09:15]`–`[09:17]` |
 | DEC-11 | Usar backoff 1m/5m/30m/2h/12h. | `[09:17] Diego` |
 | DEC-12 | Persistir DLQ em tabela separada. | `[09:17]`–`[09:18]` |
 | DEC-13 | Permitir replay manual da DLQ por endpoint admin. | `[09:18] Diego` |
@@ -130,7 +130,6 @@ Este inventário é a base de rastreabilidade para os design docs do Sistema de 
 | QA-09 | Qual regra de canonicalização do JSON para HMAC? | HMAC sobre o corpo em `[09:22]` |
 | QA-10 | Como versionar o contrato de evento? | Payload em `[09:43]` |
 | QA-11 | Qual paginação do histórico de deliveries? | Histórico em `[09:34]` |
-| QA-12 | Quais roles podem administrar CRUD além de autenticação? | `[09:36]`–`[09:37]` |
 | QA-13 | Quando introduzir rate limiting? | `[09:38]`–`[09:39]` |
 | QA-14 | Qual volume e SLO após o lançamento? | Motivação e medição mencionadas em `[09:37]`–`[09:39]` |
 

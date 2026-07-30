@@ -33,7 +33,7 @@ aceito.
 O trabalho foi dividido em etapas pequenas e revisáveis:
 
 1. leitura do enunciado, da transcrição e da estrutura do OMS;
-2. criação de um inventário com 122 evidências classificadas;
+2. criação de um inventário com 121 evidências classificadas;
 3. produção de sete ADRs para registrar as decisões isoladamente;
 4. elaboração do RFC no nível arquitetural, referenciando os ADRs;
 5. elaboração e auditoria do FDD contra a transcrição e o código;
@@ -111,7 +111,7 @@ qualquer item documental sem origem verificável.
 
 Foram realizadas **10 iterações principais** de produção e revisão:
 
-1. O pedido inicial por documentos foi precedido por um inventário de 122
+1. O pedido inicial por documentos foi precedido por um inventário de 121
    evidências para reduzir omissões e alucinações.
 2. As decisões foram separadas em sete ADRs antes do RFC, evitando que o RFC
    virasse uma lista de decisões sem contexto.
