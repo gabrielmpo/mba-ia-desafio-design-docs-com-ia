@@ -9,7 +9,7 @@ Endpoints dos clientes podem ficar indisponíveis ou responder lentamente. Uma f
 
 ## Decisão
 
-Após uma tentativa malsucedida, realizar até cinco novas tentativas nos intervalos:
+Aplicar a política registrada na reunião como **5 tentativas**, usando os intervalos:
 
 1. 1 minuto;
 2. 5 minutos;
@@ -17,7 +17,7 @@ Após uma tentativa malsucedida, realizar até cinco novas tentativas nos interv
 4. 2 horas;
 5. 12 horas.
 
-Respostas não bem-sucedidas, erros de rede e timeout de dez segundos serão tratados como falha de entrega. Esgotadas as tentativas, o evento será copiado para `webhook_dead_letter`, com payload, motivo e timestamps, e deixará o fluxo normal da outbox.
+A reunião não definiu se a chamada inicial está incluída nessas cinco tentativas, nem quais códigos HTTP são retentáveis. Esses pontos permanecem abertos. Esgotada a política de tentativas que vier a ser confirmada, o evento será copiado para `webhook_dead_letter`, com payload, motivo e timestamps, e deixará o fluxo normal da outbox.
 
 O reprocessamento será manual por `POST /admin/webhooks/dead-letter/:id/replay`, protegido pela role `ADMIN` e auditado.
 
@@ -49,7 +49,7 @@ Descartado em favor de uma tabela separada, que mantém a consulta de pendentes 
 - a entrega pode permanecer atrasada por muitas horas;
 - o endpoint pode receber duplicatas;
 - DLQ exige armazenamento, operação e autorização administrativa;
-- a semântica de quais códigos HTTP são retentáveis deve ser detalhada no FDD.
+- a relação entre a chamada inicial e as cinco tentativas, assim como a classificação de códigos HTTP, exige decisão antes da implementação.
 
 ## Rastreabilidade
 
