@@ -27,7 +27,7 @@ Fontes principais: `DEC-01` a `DEC-26`, `RF-01` a `RF-17` e `RNF-01` a `RNF-15` 
 - Entregar normalmente em menos de dez segundos.
 - Preservar um snapshot imutável da transição que originou o evento.
 - Entregar com semântica at-least-once e identificador estável para deduplicação.
-- Recuperar falhas transitórias com cinco retries e encaminhar falhas permanentes à DLQ.
+- Recuperar falhas transitórias conforme os cinco intervalos de backoff decididos e encaminhar falhas permanentes à DLQ; confirmar a contagem total de chamadas.
 - Permitir configuração, consulta de histórico, rotação de secret e replay administrativo.
 - Reutilizar Prisma, Zod, `AppError`, autenticação, autorização, respostas paginadas e Pino.
 - Manter API e worker implantáveis, reiniciáveis e observáveis separadamente.
@@ -44,7 +44,7 @@ Fontes principais: `DEC-01` a `DEC-26`, `RF-01` a `RF-17` e `RNF-01` a `RNF-15` 
 - Worker único, serial, em processo separado.
 - Polling a cada dois segundos.
 - Timeout HTTP de dez segundos.
-- Cinco retries com backoff de 1 minuto, 5 minutos, 30 minutos, 2 horas e 12 horas.
+- Política de tentativas com intervalos de 1 minuto, 5 minutos, 30 minutos, 2 horas e 12 horas; a inclusão da chamada inicial na contagem de cinco permanece aberta.
 - Histórico de todas as tentativas.
 - DLQ separada e replay manual por usuário `ADMIN`.
 - HMAC-SHA256, HTTPS obrigatório e limite de payload de 64 KB.
@@ -64,24 +64,24 @@ Fontes principais: `DEC-01` a `DEC-26`, `RF-01` a `RF-17` e `RNF-01` a `RNF-15` 
 
 Escala horizontal e retenção permanecem decisões futuras baseadas em métricas de produção.
 
-## 4. Decisões de implementação para questões abertas do RFC
+## 4. Questões abertas que bloqueiam detalhes de implementação
 
-As escolhas abaixo tornam a primeira versão implementável. Elas detalham a solução, mas não criam novos requisitos de produto.
+A reunião não fechou os itens abaixo. Eles não são decisões deste FDD e não devem ser implementados como se fossem requisitos aprovados. Cada item precisa de validação do responsável indicado antes do início da tarefa correspondente.
 
-| Questão | Decisão da primeira versão | Justificativa |
+| Questão aberta | Evidência disponível | Tratamento até a decisão |
 | --- | --- | --- |
-| Tamanho do lote | 20 eventos, configurável por `WEBHOOK_BATCH_SIZE` entre 1 e 100 | Lote pequeno reduz tempo de lock e é compatível com o single worker |
-| Claim e locking | Claim transacional com `SELECT ... FOR UPDATE SKIP LOCKED`, status `PROCESSING` e lease de 60 segundos | Impede duplo claim e recupera eventos após queda do processo |
-| Códigos retentáveis | Rede, timeout, `408`, `425`, `429` e `5xx` | São falhas potencialmente transitórias |
-| Falhas permanentes | Redirecionamentos e demais `4xx` vão diretamente para a DLQ | Repetição normalmente não corrige URL ou requisição inválida |
-| Jitter | Não usar na primeira versão | Há somente um worker; preserva os intervalos aprovados na reunião |
-| Secret em repouso | AES-256-GCM com chave externa ao banco | A secret precisa ser recuperável para assinar; hash irreversível não atende |
-| Grace period | Por 24 horas, `X-Signature` contém assinaturas feitas com a secret atual e com a anterior | Permite migração sem interromper consumidores que ainda usam a secret antiga |
-| Formato da assinatura | `sha256=<hex-lowercase>` sobre os bytes UTF-8 exatos do snapshot | Evita divergência por reserialização do JSON |
-| Versionamento do evento | Campo `schema_version: 1`; mudanças aditivas mantêm a versão, breaking changes criam nova versão | Torna a evolução explícita |
-| Paginação de deliveries | `page=1`, `pageSize=20`, máximo 100 | Reutiliza o padrão já existente no OMS |
-| Roles do CRUD | Qualquer usuário autenticado; replay somente `ADMIN` | Decisão explícita da reunião em `[09:35]`–`[09:37]` |
-| Rate limiting | Não implementar; observar volume, lag e taxa de falha | Item adiado em `[09:38]`–`[09:39]` |
+| Tamanho do lote | Polling de 2 segundos e single worker foram decididos; o lote não foi quantificado | Tornar o valor configurável, sem fixar default neste documento |
+| Claim, locking e recuperação após queda | Lock pessimista foi citado apenas como alternativa futura para múltiplos workers em `[09:13]` | Não exigir `SKIP LOCKED`, lease ou estado `PROCESSING` na primeira fase; detalhar a recuperação antes de implementar o worker |
+| Contagem de tentativas | `[09:17]` diz “5 tentativas” e também lista cinco intervalos (1m/5m/30m/2h/12h) | Confirmar se são cinco chamadas totais ou uma inicial mais cinco retries |
+| Códigos HTTP retentáveis | Retry, backoff, timeout e DLQ foram decididos; a classificação por status não foi | Definir matriz de `3xx`, `4xx` e `5xx` antes de implementar o processor |
+| Uso de jitter | Não discutido | Não tratar presença ou ausência de jitter como requisito |
+| Proteção da secret em repouso | Secret por endpoint e rotação foram decididas; algoritmo de armazenamento não foi | Submeter a modelagem à revisão de Sofia antes da migration |
+| Mecânica do grace period | A secret antiga deve permanecer válida por 24 horas, conforme `[09:21]`–`[09:22]` | Definir como o consumidor receberá/verificará a assinatura antiga; não assumir duas assinaturas no mesmo header |
+| Formato de `X-Signature` e serialização | HMAC-SHA256 sobre o corpo foi decidido; encoding, prefixo e canonicalização não | Congelar o corpo por tentativa e publicar um vetor de teste após a definição do formato |
+| Versionamento do evento | Não discutido | Não incluir `schema_version` como campo obrigatório nesta fase |
+| Paginação do histórico | Foram pedidos os últimos 100 registros em `[09:34]`; parâmetros e defaults não foram definidos | Reutilizar o helper existente quando aplicável, deixando o contrato exato para validação |
+| Roles do CRUD | Qualquer role autenticada em `[09:36]`–`[09:37]`; replay somente `ADMIN` | Aplicar apenas autenticação ao CRUD e `requireRole('ADMIN')` ao replay |
+| Rate limiting | Adiado em `[09:38]`–`[09:39]` | Não implementar nesta fase; medir volume e falhas |
 
 ## 5. Arquitetura e componentes
 
@@ -118,6 +118,8 @@ Responsabilidades:
 
 ## 6. Modelo de dados
 
+O modelo abaixo é uma proposta de implementação derivada das entidades decididas na reunião. Nomes de campos auxiliares, tamanhos de colunas e índices que não possuem timestamp ou equivalente no código são sugestões não normativas e precisam ser validados na migration review.
+
 Os nomes abaixo seguem o mapeamento camelCase do Prisma para snake_case no MySQL.
 
 ### 6.1 `WebhookEndpoint`
@@ -130,20 +132,15 @@ Representa uma configuração outbound.
 | `customerId` | `String @db.Char(36)` | FK para `Customer` |
 | `url` | `String @db.VarChar(2048)` | URL HTTPS válida |
 | `active` | `Boolean` | `true` na criação |
-| `secretCiphertext` | `String @db.Text` | Secret atual criptografada |
-| `secretIv` | `String @db.VarChar(64)` | IV da secret atual |
-| `secretAuthTag` | `String @db.VarChar(64)` | Tag GCM da secret atual |
-| `previousSecretCiphertext` | `String? @db.Text` | Secret anterior durante a rotação |
-| `previousSecretIv` | `String? @db.VarChar(64)` | IV da secret anterior |
-| `previousSecretAuthTag` | `String? @db.VarChar(64)` | Tag GCM da secret anterior |
+| `secretProtected` | `String @db.Text` | Representação recuperável da secret atual; mecanismo a definir na revisão de segurança |
+| `previousSecretProtected` | `String? @db.Text` | Representação recuperável da secret anterior durante a rotação |
 | `previousSecretValidUntil` | `DateTime?` | Expiração após 24 horas |
 | `createdAt` / `updatedAt` | `DateTime` | Auditoria temporal |
-| `deletedAt` | `DateTime?` | Exclusão lógica |
+Índice inicial:
 
-Índices:
+- `@@index([customerId, active])`.
 
-- `@@index([customerId, active])`;
-- `@@index([deletedAt])`.
+A semântica de remoção física ou lógica não foi definida na reunião e deve ser confirmada antes da migration.
 
 ### 6.2 `WebhookEndpointStatus`
 
@@ -166,10 +163,9 @@ Armazena um evento por endpoint interessado.
 | `orderId` | `String @db.Char(36)` | Pedido que originou o evento |
 | `eventType` | `String @db.VarChar(100)` | `order.status_changed` |
 | `payloadJson` | `String @db.Text` | JSON serializado e imutável |
-| `status` | `WebhookOutboxStatus` | `PENDING`, `PROCESSING`, `RETRY_SCHEDULED`, `DELIVERED` ou `CANCELLED` |
-| `attemptCount` | `Int` | Número de chamadas HTTP já realizadas |
+| `status` | `WebhookOutboxStatus` | No mínimo `PENDING`, `RETRY_SCHEDULED` e `DELIVERED`; estados de claim dependem da estratégia ainda aberta |
+| `attemptCount` | `Int` | Número de chamadas HTTP já realizadas; limite final depende da confirmação da contagem |
 | `nextAttemptAt` | `DateTime` | Momento a partir do qual o evento está elegível |
-| `lockedAt` | `DateTime?` | Início do lease |
 | `lastErrorCode` | `String? @db.VarChar(100)` | Último código operacional |
 | `lastErrorMessage` | `String? @db.VarChar(1000)` | Mensagem sanitizada |
 | `createdAt` / `updatedAt` | `DateTime` | Auditoria temporal |
@@ -191,12 +187,11 @@ Registra cada chamada HTTP, inclusive falhas.
 | `eventId` | `String @db.Char(36)` | ID estável do evento |
 | `webhookId` | `String @db.Char(36)` | Endpoint usado |
 | `payloadJson` | `String @db.Text` | Snapshot enviado nesta tentativa |
-| `attemptNumber` | `Int` | 1 para a tentativa inicial; 2 a 6 para retries |
+| `attemptNumber` | `Int` | Sequência da chamada; limite depende da confirmação da contagem de tentativas |
 | `outcome` | `WebhookDeliveryOutcome` | `SUCCESS` ou `FAILURE` |
 | `httpStatus` | `Int?` | Ausente para erro de rede ou timeout |
 | `errorCode` | `String? @db.VarChar(100)` | Código `WEBHOOK_*` |
-| `responseBody` | `String? @db.Text` | Primeiros 64 KB da resposta |
-| `responseTruncated` | `Boolean` | Indica truncamento |
+| `responseBody` | `String? @db.Text` | Resposta registrada para histórico; limite e sanitização devem ser definidos antes da implementação |
 | `durationMs` | `Int` | Duração da tentativa |
 | `createdAt` | `DateTime` | Horário da tentativa |
 
@@ -246,70 +241,48 @@ O replay não apaga o registro de DLQ. Ele marca `replayedAt` e `replayedById` e
 
 Assinantes são filtrados na inserção, não no envio. O payload nunca é reconstruído pelo worker.
 
-### 7.2 Claim pelo worker
+### 7.2 Leitura pelo worker
 
-Em cada ciclo:
+Em cada ciclo da primeira fase:
 
-1. Recuperar leases abandonados: eventos `PROCESSING` com `lockedAt < now - 60s` voltam ao estado anterior elegível.
-2. Abrir transação curta.
-3. Selecionar até `WEBHOOK_BATCH_SIZE` eventos:
-   - status `PENDING` ou `RETRY_SCHEDULED`;
-   - `nextAttemptAt <= now`;
-   - endpoint ativo;
-   - sem evento anterior ainda não terminal para o mesmo `orderId`;
-   - ordem por `createdAt ASC`;
-   - lock `FOR UPDATE SKIP LOCKED`.
-4. Alterar os selecionados para `PROCESSING` e preencher `lockedAt`.
-5. Commitar o claim antes de qualquer chamada externa.
-6. Processar serialmente os eventos reclamados.
+1. Consultar eventos `PENDING` ou `RETRY_SCHEDULED` com `nextAttemptAt <= now`.
+2. Ordenar por `createdAt ASC`, conforme `[09:12]`.
+3. Limitar a consulta por um tamanho de lote configurável, cujo valor ainda precisa ser definido.
+4. Processar serialmente no único worker decidido para a fase inicial.
+5. Não manter transação aberta durante chamadas HTTP.
 
-Embora a primeira versão tenha somente um worker, o claim transacional elimina duplo processamento acidental e facilita recuperação após reinício. O processamento serial e o bloqueio de eventos posteriores preservam a ordem por pedido enquanto uma transição anterior estiver pendente ou em retry.
+A reunião não definiu claim, lease nem recuperação de evento interrompido. `SELECT ... FOR UPDATE SKIP LOCKED`, status `PROCESSING` e timeout de lease são alternativas possíveis, não requisitos aprovados. A estratégia escolhida deve preservar at-least-once após reinício e ser registrada antes da implementação. O ordering é implícito no single worker ordenado por `createdAt`; não há garantia global nem desenho aprovado para múltiplos workers.
 
 ### 7.3 Entrega HTTP
 
 Para cada evento:
 
 1. Recarregar o endpoint e confirmar que continua ativo.
-2. Descriptografar a secret atual; carregar também a anterior se ainda estiver no grace period.
+2. Recuperar a secret atual pelo mecanismo aprovado na revisão de segurança; durante o grace period, aplicar a mecânica de compatibilidade que ainda será definida.
 3. Usar exatamente `payloadJson` como corpo, sem parse ou nova serialização.
-4. Calcular HMAC-SHA256 para cada secret válida.
-5. Efetuar `POST` com `fetch`, `redirect: 'manual'` e `AbortController` de 10 segundos.
+4. Calcular HMAC-SHA256 sobre o corpo conforme o formato de assinatura que ainda será definido.
+5. Efetuar `POST` com timeout de 10 segundos. O cliente HTTP e a política de redirects permanecem decisões de implementação abertas.
 6. Registrar `WebhookDelivery` com duração, status, resposta e resultado.
-7. Em `2xx`, marcar a outbox como `DELIVERED`.
-8. Em falha retentável, reagendar ou mover à DLQ caso tenham sido esgotados os retries.
-9. Em falha permanente, mover imediatamente à DLQ.
-10. Se o endpoint foi removido, marcar o evento `CANCELLED` sem chamada externa.
+7. Em resposta considerada bem-sucedida, marcar a outbox como `DELIVERED`.
+8. Em falha classificada como retentável, reagendar ou mover à DLQ quando a política aprovada se esgotar.
+9. Em falha classificada como permanente, mover à DLQ.
+10. Tratar endpoint removido ou inativo conforme a semântica de remoção ainda a confirmar.
 
 O worker não mantém transação de banco aberta durante o request HTTP.
 
 ### 7.4 Retry
 
-`attemptCount` representa chamadas HTTP concluídas ou interrompidas por timeout. Há uma tentativa inicial e cinco retries, totalizando no máximo seis chamadas.
+`attemptCount` representa chamadas HTTP realizadas, inclusive as interrompidas por timeout. A reunião decidiu “5 tentativas” e os intervalos `1m/5m/30m/2h/12h`, mas não esclareceu se a tentativa inicial está incluída nessa contagem. Essa ambiguidade deve ser resolvida antes de codificar o limite.
 
-| Chamada que falhou | Próxima ação |
-| ---: | --- |
-| 1 — tentativa inicial | Retry 1 em 1 minuto |
-| 2 — retry 1 | Retry 2 em 5 minutos |
-| 3 — retry 2 | Retry 3 em 30 minutos |
-| 4 — retry 3 | Retry 4 em 2 horas |
-| 5 — retry 4 | Retry 5 em 12 horas |
-| 6 — retry 5 | Mover para DLQ |
+| Ordem dos intervalos decididos | Aguardar antes da próxima execução |
+| ---: | ---: |
+| 1 | 1 minuto |
+| 2 | 5 minutos |
+| 3 | 30 minutos |
+| 4 | 2 horas |
+| 5 | 12 horas |
 
-Falhas retentáveis:
-
-- erro de DNS, conexão ou TLS;
-- conexão encerrada sem resposta;
-- timeout de 10 segundos;
-- HTTP `408`, `425`, `429`;
-- HTTP `500` a `599`.
-
-Falhas permanentes:
-
-- HTTP `300` a `399`, pois redirects não são seguidos;
-- HTTP `400` a `499`, exceto `408`, `425` e `429`;
-- endpoint removido ou configuração inválida.
-
-O backoff não usa jitter na primeira versão. O mesmo `event_id` e o mesmo corpo são mantidos em todas as tentativas.
+O timeout de 10 segundos, o backoff e o envio final à DLQ estão confirmados. A classificação de erros de rede e códigos HTTP como retentáveis ou permanentes, o comportamento de redirects e o uso de jitter não foram decididos. Até essa matriz ser aprovada, o FDD não atribui semântica definitiva a `3xx`, `4xx` ou `5xx`. O mesmo `event_id` e o snapshot do corpo são preservados nas novas tentativas.
 
 ### 7.5 DLQ e replay
 
@@ -338,7 +311,6 @@ O replay pode novamente terminar na DLQ. Nesse caso, um novo registro de DLQ é 
 
 ```json
 {
-  "schema_version": 1,
   "event_id": "550e8400-e29b-41d4-a716-446655440000",
   "event_type": "order.status_changed",
   "timestamp": "2026-07-30T12:34:56.789Z",
@@ -355,7 +327,7 @@ Regras:
 
 - codificação UTF-8;
 - `Content-Type: application/json`;
-- chaves sempre na ordem exibida;
+- os campos exibidos correspondem ao payload decidido em `[09:43]`; a estratégia exata de serialização para HMAC permanece aberta;
 - `timestamp` é o instante de criação do evento em UTC/ISO 8601;
 - limite máximo de 65.536 bytes;
 - itens do pedido não são enviados;
@@ -368,18 +340,14 @@ Content-Type: application/json
 X-Event-Id: 550e8400-e29b-41d4-a716-446655440000
 X-Webhook-Id: a4525fc4-85f7-46cb-8c53-a839fd8755e8
 X-Timestamp: 2026-07-30T12:34:58.132Z
-X-Signature: sha256=7f1c...e029
+X-Signature: <hmac-sha256-em-formato-a-definir>
 ```
 
-Durante as 24 horas posteriores à rotação:
-
-```http
-X-Signature: sha256=<assinatura-atual>,sha256=<assinatura-anterior>
-```
-
-O consumidor divide o valor por vírgula, calcula o HMAC sobre os bytes recebidos e aceita se qualquer assinatura corresponder em comparação constant-time. `X-Timestamp` registra o instante da tentativa; a deduplicação deve usar `X-Event-Id`.
+A secret anterior permanece válida por 24 horas após a rotação. A reunião não definiu se a compatibilidade será representada por duas assinaturas, headers separados ou outro mecanismo; portanto, o contrato exato de `X-Signature` deve ser aprovado por Segurança e acompanhado de vetor de teste. `X-Timestamp` registra o instante da tentativa; a deduplicação usa `X-Event-Id`.
 
 ## 9. Contratos públicos da API
+
+Os métodos, recursos e regras de autenticação abaixo vêm da reunião. Paths completos, exemplos de status HTTP e detalhes de paginação que não aparecem literalmente na transcrição são propostas alinhadas aos padrões do código existente e devem ser confirmadas na API review.
 
 Todas as rotas ficam sob `/api/v1`, recebem `Authorization: Bearer <jwt>` e usam o formato de erro do middleware central:
 
@@ -394,7 +362,7 @@ Todas as rotas ficam sob `/api/v1`, recebem `Authorization: Bearer <jwt>` e usam
 
 ### 9.1 Criar endpoint — `POST /api/v1/webhooks`
 
-Roles: `ADMIN` e `OPERATOR`.
+Autorização: qualquer usuário autenticado, conforme `[09:36]`–`[09:37]`.
 
 Request:
 
@@ -420,18 +388,18 @@ Response `201 Created`:
 }
 ```
 
-A secret é gerada com CSPRNG, tem pelo menos 256 bits de entropia e é exibida somente nesta resposta.
+A secret é gerada pelo servidor com mecanismo criptograficamente seguro e exibida na resposta de criação. Parâmetros exatos de geração e política de reexibição devem ser aprovados na revisão de segurança.
 
 Status possíveis: `201`, `400`, `401`, `404`, `409`.
 
 ### 9.2 Listar por customer — `GET /api/v1/webhooks`
 
-Roles: `ADMIN` e `OPERATOR`.
+Autorização: qualquer usuário autenticado, conforme `[09:36]`–`[09:37]`.
 
 Request:
 
 ```http
-GET /api/v1/webhooks?customerId=055b46d4-8d63-4dd9-b6bf-6d4ce3cd65f1&page=1&pageSize=20
+GET /api/v1/webhooks?customerId=055b46d4-8d63-4dd9-b6bf-6d4ce3cd65f1
 ```
 
 Response `200 OK`:
@@ -464,7 +432,7 @@ Status possíveis: `200`, `400`, `401`, `404`.
 
 ### 9.3 Editar endpoint — `PATCH /api/v1/webhooks/:id`
 
-Roles: `ADMIN` e `OPERATOR`.
+Autorização: qualquer usuário autenticado, conforme `[09:36]`–`[09:37]`.
 
 Request:
 
@@ -495,9 +463,9 @@ Status possíveis: `200`, `400`, `401`, `404`, `409`.
 
 ### 9.4 Remover endpoint — `DELETE /api/v1/webhooks/:id`
 
-Roles: `ADMIN` e `OPERATOR`.
+Autorização: qualquer usuário autenticado, conforme `[09:36]`–`[09:37]`.
 
-Realiza exclusão lógica, define `active = false` e `deletedAt = now`. O worker cancela eventos ainda não enviados para esse endpoint.
+A reunião exige remoção, mas não definiu exclusão física ou lógica nem o destino dos eventos pendentes. O contrato final deve escolher essa semântica antes da migration.
 
 Response: `204 No Content`.
 
@@ -505,7 +473,7 @@ Status possíveis: `204`, `400`, `401`, `404`.
 
 ### 9.5 Rotacionar secret — `POST /api/v1/webhooks/:id/rotate-secret`
 
-Roles: `ADMIN` e `OPERATOR`.
+Autorização: qualquer usuário autenticado, conforme `[09:36]`–`[09:37]`.
 
 Request sem body.
 
@@ -519,18 +487,18 @@ Response `200 OK`:
 }
 ```
 
-A nova secret também é exibida somente uma vez. Uma nova rotação substitui o par anterior e reinicia o grace period.
+A nova secret também é exibida somente uma vez. O comportamento de uma segunda rotação dentro do grace period ainda precisa ser definido.
 
 Status possíveis: `200`, `401`, `404`, `409`.
 
 ### 9.6 Histórico — `GET /api/v1/webhooks/:id/deliveries`
 
-Roles: `ADMIN` e `OPERATOR`.
+Autorização: qualquer usuário autenticado, conforme `[09:36]`–`[09:37]`.
 
 Request:
 
 ```http
-GET /api/v1/webhooks/a4525fc4-85f7-46cb-8c53-a839fd8755e8/deliveries?page=1&pageSize=20
+GET /api/v1/webhooks/a4525fc4-85f7-46cb-8c53-a839fd8755e8/deliveries
 ```
 
 Response `200 OK`:
@@ -545,7 +513,6 @@ Response `200 OK`:
       "outcome": "SUCCESS",
       "httpStatus": 204,
       "payload": {
-        "schema_version": 1,
         "event_id": "550e8400-e29b-41d4-a716-446655440000",
         "event_type": "order.status_changed",
         "timestamp": "2026-07-30T12:34:56.789Z",
@@ -595,6 +562,8 @@ Status possíveis: `202`, `400`, `401`, `403`, `404`, `409`.
 
 ## 10. Matriz de erros
 
+Os códigos seguem o prefixo `WEBHOOK_` decidido em `[09:28]`–`[09:30]`. Códigos específicos e status HTTP são propostas para revisão, exceto quando vinculados diretamente a uma validação ou decisão citada.
+
 Erros de forma genérica continuam usando `VALIDATION_ERROR`, `UNAUTHORIZED` e `FORBIDDEN` dos middlewares compartilhados. Erros de domínio e operação do módulo usam `WEBHOOK_*`.
 
 | Código | HTTP | Condição | Tratamento |
@@ -609,10 +578,9 @@ Erros de forma genérica continuam usando `VALIDATION_ERROR`, `UNAUTHORIZED` e `
 | `WEBHOOK_PAYLOAD_TOO_LARGE` | 422 | Snapshot excede 64 KB | Reverter a mudança de status |
 | `WEBHOOK_DELIVERY_TIMEOUT` | — | Request excede 10 segundos | Registrar e aplicar retry |
 | `WEBHOOK_DELIVERY_NETWORK_ERROR` | — | DNS, TLS ou conexão falhou | Registrar e aplicar retry |
-| `WEBHOOK_DELIVERY_RETRYABLE_HTTP_ERROR` | — | `408`, `425`, `429` ou `5xx` | Registrar e aplicar retry |
-| `WEBHOOK_DELIVERY_PERMANENT_HTTP_ERROR` | — | Redirect ou demais `4xx` | Mover à DLQ |
-| `WEBHOOK_RETRY_EXHAUSTED` | — | Sexta chamada falhou | Mover à DLQ |
-| `WEBHOOK_ENDPOINT_INACTIVE` | — | Endpoint removido antes da chamada | Cancelar evento |
+| `WEBHOOK_DELIVERY_HTTP_ERROR` | — | Resposta HTTP não classificada como sucesso | Aplicar a matriz retentável/permanente depois de aprovada |
+| `WEBHOOK_RETRY_EXHAUSTED` | — | Quantidade aprovada de tentativas foi esgotada | Mover à DLQ |
+| `WEBHOOK_ENDPOINT_INACTIVE` | — | Endpoint inativo antes da chamada | Aplicar a semântica de remoção ainda a confirmar |
 | `WEBHOOK_DEAD_LETTER_NOT_FOUND` | 404 | Item da DLQ inexistente | Retornar erro |
 | `WEBHOOK_DEAD_LETTER_ALREADY_QUEUED` | 409 | Já há outbox ativa para o mesmo evento | Não duplicar replay |
 
@@ -620,14 +588,14 @@ Mensagens persistidas e retornadas não devem incluir secrets, headers de autent
 
 ## 11. Segurança e gestão de secrets
 
-- Gerar secrets com `crypto.randomBytes(32)` e codificação base64url, prefixadas por `whsec_`.
-- Criptografar em repouso com AES-256-GCM.
-- Carregar a chave de 32 bytes a partir de `WEBHOOK_SECRET_ENCRYPTION_KEY`; nunca armazená-la no MySQL.
+- Gerar secrets no servidor por mecanismo criptograficamente seguro; tamanho, codificação e prefixo dependem da revisão de segurança.
+- Proteger a secret em repouso com mecanismo recuperável aprovado por Segurança; algoritmo ainda aberto.
+- Carregar o material necessário ao mecanismo de proteção por configuração externa ao MySQL, após definição na revisão de segurança.
 - Retornar a secret somente na criação e na rotação.
 - Nunca incluir secrets no histórico, logs ou erros.
 - Acrescentar ao redaction do Pino: `*.secret`, `*.secretCiphertext`, `*.previousSecretCiphertext` e `req.body.secret`.
 - Exigir protocolo `https:` no schema e no service.
-- Não seguir redirects.
+- Definir explicitamente a política de redirects na matriz de falhas antes da implementação.
 - Comparações de assinatura no exemplo de integração do cliente devem usar função constant-time.
 - Agendar pelo menos dois dias úteis de revisão de Sofia antes do deploy.
 
@@ -638,13 +606,13 @@ A política completa de proteção contra SSRF e resolução para endereços pri
 - **Atomicidade:** status, histórico, estoque e outbox compartilham a transação.
 - **Desacoplamento:** nenhuma chamada externa ocorre na API de pedidos.
 - **Timeout:** 10 segundos por tentativa com `AbortController`.
-- **Retry:** cinco retries determinísticos depois da tentativa inicial.
+- **Retry:** aplicar os cinco intervalos decididos após confirmar se a chamada inicial integra a contagem de cinco tentativas.
 - **DLQ:** falhas permanentes ou esgotadas saem da consulta normal.
 - **At-least-once:** falha após o cliente processar e antes do commit local pode gerar duplicata.
-- **Lease:** itens `PROCESSING` há mais de 60 segundos voltam ao fluxo.
+- **Recuperação:** definir como eventos interrompidos voltam ao fluxo sem violar at-least-once.
 - **Shutdown:** ao receber `SIGINT` ou `SIGTERM`, o worker para novos claims, aguarda a tentativa atual até o timeout e desconecta o Prisma.
 - **Falha de banco no polling:** registrar erro, aguardar o próximo intervalo e tentar novamente sem encerrar o processo.
-- **Ordering:** serial por `createdAt`, bloqueando eventos posteriores do mesmo pedido enquanto houver anterior não terminal.
+- **Ordering:** no single worker, processar serialmente por `createdAt`; desenho para múltiplos workers fica fora de escopo.
 - **Endpoint removido:** não criar novos eventos e cancelar os ainda não enviados.
 
 ## 13. Observabilidade
@@ -675,7 +643,7 @@ Eventos mínimos:
 - `webhook_retry_scheduled`;
 - `webhook_moved_to_dead_letter`;
 - `webhook_dead_letter_replayed`;
-- `webhook_processing_lease_recovered`;
+- `webhook_processing_recovered` (após definição da estratégia de recuperação);
 - `webhook_worker_started`;
 - `webhook_worker_stopped`.
 
@@ -701,7 +669,7 @@ Recomenda-se alertar quando:
 - a taxa de falha superar 5% em janela de 5 minutos;
 - houver crescimento contínuo da DLQ;
 - o worker não emitir heartbeat por mais de 30 segundos;
-- o número de leases recuperados for maior que zero de forma recorrente.
+- o número de eventos recuperados após interrupção for maior que zero de forma recorrente.
 
 Os limiares devem ser recalibrados após o piloto, pois o volume real permanece questão aberta.
 
@@ -735,11 +703,10 @@ Variáveis:
 
 | Variável | Obrigatória | Default | Regra |
 | --- | --- | --- | --- |
-| `WEBHOOK_SECRET_ENCRYPTION_KEY` | sim | — | Base64 de 32 bytes |
+| Configuração de proteção da secret | a definir | — | Nome, formato e origem dependem da revisão de segurança |
 | `WEBHOOK_POLL_INTERVAL_MS` | não | `2000` | Manter 2000 em produção nesta fase |
-| `WEBHOOK_BATCH_SIZE` | não | `20` | Inteiro entre 1 e 100 |
+| `WEBHOOK_BATCH_SIZE` | sim | sem default definido | Inteiro positivo; valor depende de validação |
 | `WEBHOOK_HTTP_TIMEOUT_MS` | não | `10000` | Manter 10000 em produção nesta fase |
-| `WEBHOOK_PROCESSING_LEASE_MS` | não | `60000` | Deve ser maior que o timeout HTTP |
 
 Scripts:
 
@@ -759,7 +726,7 @@ API e worker usam a mesma `DATABASE_URL`, mas processos e pools Prisma separados
 - Node.js `>=20`, TypeScript `5.6`, Prisma `5.22` e MySQL `8.0` permanecem suportados.
 - A mudança exige migration antes de habilitar a criação de eventos.
 - O contrato de `PATCH /api/v1/orders/:id/status` não muda.
-- Campos aditivos no payload mantêm `schema_version: 1`.
+- A estratégia de versionamento do payload permanece aberta.
 - Remoção, renomeação ou alteração semântica exige nova versão de schema e estratégia de convivência.
 - O worker deve ser implantado somente após a migration e pode permanecer desabilitado enquanto a API começa a preencher a outbox.
 - Rollback do worker não afeta a API; eventos permanecem persistidos.
@@ -769,10 +736,10 @@ API e worker usam a mesma `DATABASE_URL`, mas processos e pools Prisma separados
 
 ### 17.1 Unitários
 
-- serialização determinística e limite de 64 KB;
+- preservação do snapshot e limite de 64 KB; estratégia de serialização ainda aberta;
 - assinatura HMAC sobre os bytes exatos;
-- duas assinaturas durante grace period e uma após expiração;
-- criptografia e descriptografia AES-GCM;
+- compatibilidade da secret anterior durante o grace period, após definição do contrato;
+- proteção e recuperação da secret pelo mecanismo aprovado por Segurança;
 - validação HTTPS e status de pedido;
 - classificação de erros retentáveis e permanentes;
 - cálculo dos cinco intervalos;
@@ -788,13 +755,13 @@ API e worker usam a mesma `DATABASE_URL`, mas processos e pools Prisma separados
 - filtro de status ocorre antes da inserção;
 - claim respeita ordem por `createdAt`;
 - evento posterior do mesmo pedido aguarda o anterior;
-- lease expirado é recuperado;
+- recuperação após interrupção segue a estratégia que ainda será aprovada;
 - DLQ e remoção da outbox são atômicas;
 - replay preserva `eventId` e audita o usuário.
 
 ### 17.3 Contrato HTTP
 
-- CRUD autenticado para `ADMIN` e `OPERATOR`;
+- CRUD disponível a qualquer role autenticada; replay restrito a `ADMIN`;
 - replay negado para `OPERATOR`;
 - secret visível somente na criação e rotação;
 - paginação no formato compartilhado;
@@ -809,8 +776,7 @@ Usar servidor HTTP controlado nos testes para simular:
 - `2xx`;
 - timeout acima de 10 segundos;
 - encerramento de conexão;
-- `408`, `425`, `429` e `5xx`;
-- redirect e `4xx` permanente;
+- classificação de códigos HTTP conforme matriz ainda a aprovar;
 - queda do worker antes de persistir sucesso;
 - resposta maior que o limite de histórico;
 - duplicata com o mesmo `X-Event-Id`;
@@ -826,10 +792,10 @@ Usar servidor HTTP controlado nos testes para simular:
 - [ ] Snapshot é imutável, não contém itens e não excede 64 KB.
 - [ ] Worker roda em processo e `PrismaClient` separados da API.
 - [ ] Polling ocorre a cada dois segundos com lote inicial de 20.
-- [ ] Processamento é serial e preserva ordem por pedido na limitação documentada.
+- [ ] Processamento no single worker é serial e ordenado por `createdAt`, dentro da limitação documentada.
 - [ ] Cada chamada usa timeout de dez segundos.
 - [ ] Falhas retentáveis seguem 1m/5m/30m/2h/12h.
-- [ ] Após a tentativa inicial e cinco retries, o evento vai para a DLQ.
+- [ ] Após a quantidade de tentativas aprovada e os intervalos decididos, o evento vai para a DLQ.
 - [ ] Retries e replay preservam `event_id` e payload.
 - [ ] Request outbound inclui os quatro headers definidos.
 - [ ] HMAC é calculado sobre os bytes enviados.
@@ -847,9 +813,9 @@ Usar servidor HTTP controlado nos testes para simular:
 | --- | --- | --- | --- |
 | Crescimento da outbox e do histórico | Média | Alto | Índices, lote pequeno, métricas de backlog e política de retenção futura |
 | Single worker não sustentar picos | Média | Alto | Monitorar lag; planejar locking/particionamento quando os dados justificarem |
-| Endpoint lento bloquear o processamento serial | Alta | Médio | Timeout de 10 segundos e retry reagendado |
+| Endpoint lento bloquear o processamento serial | Alta | Médio | Timeout de 10 segundos e backoff decidido |
 | Duplicata gerar efeito repetido no cliente | Média | Alto | `X-Event-Id`, documentação e testes de idempotência |
-| Vazamento de secret | Baixa | Alto | AES-GCM, redaction, exibição única, rotação e revisão de segurança |
+| Vazamento de secret | Baixa | Alto | Redaction, rotação, proteção em repouso a definir e revisão de segurança |
 | SSRF por URL cadastrada | Média | Alto | HTTPS obrigatório e definição da política de redes permitidas antes da produção |
 | Evento posterior ficar bloqueado durante retry do mesmo pedido | Média | Médio | Trade-off explícito para preservar ordering; medir lag por pedido |
 | Falha após recebimento remoto e antes do commit local | Baixa | Médio | Semântica at-least-once e deduplicação no consumidor |
