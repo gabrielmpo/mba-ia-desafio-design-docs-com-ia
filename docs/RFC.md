@@ -80,11 +80,11 @@ Inicialmente haverá apenas um worker. Isso reduz a complexidade de concorrênci
 
 ### Entrega, retry e DLQ
 
-A chamada terá timeout de dez segundos. Em caso de falha de rede, timeout ou resposta considerada não bem-sucedida, o evento será reagendado conforme a sequência de backoff:
+A chamada terá timeout de dez segundos. As falhas elegíveis para retry serão reagendadas conforme a sequência de backoff:
 
 `1 minuto → 5 minutos → 30 minutos → 2 horas → 12 horas`
 
-Após cinco retries, o evento será movido para uma tabela de dead letter com payload, motivo da falha e timestamps. Um endpoint administrativo permitirá o replay manual, exigindo role `ADMIN` e registro de auditoria.
+A reunião registrou a política como cinco tentativas, mas não esclareceu se a chamada inicial está incluída nessa contagem nem quais códigos HTTP são retentáveis. Esses pontos permanecem abertos. Esgotada a política que vier a ser confirmada, o evento será movido para uma tabela de dead letter com payload, motivo da falha e timestamps. Um endpoint administrativo permitirá o replay manual, exigindo role `ADMIN` e registro de auditoria.
 
 ### Segurança
 
