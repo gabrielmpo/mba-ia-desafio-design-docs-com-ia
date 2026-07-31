@@ -723,8 +723,8 @@ API e worker usam a mesma `DATABASE_URL`, mas processos e pools Prisma separados
 
 - serialização determinística e limite de 64 KB;
 - assinatura HMAC sobre os bytes exatos;
-- duas assinaturas durante grace period e uma após expiração;
-- criptografia e descriptografia AES-GCM;
+- comportamento da rotação durante e após o grace period, conforme a mecânica aprovada pela Segurança;
+- proteção e recuperação da secret com o mecanismo aprovado pela Segurança;
 - validação HTTPS e status de pedido;
 - classificação de erros retentáveis e permanentes;
 - cálculo dos cinco intervalos;
@@ -802,7 +802,7 @@ Usar servidor HTTP controlado nos testes para simular:
 | Single worker não sustentar picos | Média | Alto | Monitorar lag; planejar locking/particionamento quando os dados justificarem |
 | Endpoint lento bloquear o processamento serial | Alta | Médio | Timeout de 10 segundos e retry reagendado |
 | Duplicata gerar efeito repetido no cliente | Média | Alto | `X-Event-Id`, documentação e testes de idempotência |
-| Vazamento de secret | Baixa | Alto | AES-GCM, redaction, exibição única, rotação e revisão de segurança |
+| Vazamento de secret | Baixa | Alto | Mecanismo de proteção em repouso aprovado pela Segurança, redaction, exibição única, rotação e revisão de segurança |
 | SSRF por URL cadastrada | Média | Alto | HTTPS obrigatório e definição da política de redes permitidas antes da produção |
 | Evento posterior ficar bloqueado durante retry do mesmo pedido | Média | Médio | Trade-off explícito para preservar ordering; medir lag por pedido |
 | Falha após recebimento remoto e antes do commit local | Baixa | Médio | Semântica at-least-once e deduplicação no consumidor |
